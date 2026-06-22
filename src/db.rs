@@ -97,6 +97,46 @@ impl ProgressStore {
         Ok(progress)
     }
 
+    pub fn force_save(
+        &self,
+        user_id: &str,
+        audio_id: &str,
+        device_id: &str,
+        position: f64,
+        duration: Option<f64>,
+    ) -> Result<AudioProgress> {
+        let mut data = self.data.write();
+        let now = Utc::now();
+        let dur = duration.unwrap_or(0.0);
+
+        let prefix = format!("{}:{}:", user_id, audio_id);
+        let keys_to_clear: Vec<String> = data
+            .progresses
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for k in keys_to_clear {
+            data.progresses.remove(&k);
+        }
+
+        let k = device_key(user_id, audio_id, device_id);
+        let new_progress = AudioProgress {
+            id: Uuid::new_v4(),
+            user_id: user_id.to_string(),
+            audio_id: audio_id.to_string(),
+            device_id: device_id.to_string(),
+            position,
+            duration: dur,
+            created_at: now,
+            updated_at: now,
+        };
+        data.progresses.insert(k, new_progress.clone());
+
+        self.persist(&data)?;
+        Ok(new_progress)
+    }
+
     pub fn get_device(
         &self,
         user_id: &str,

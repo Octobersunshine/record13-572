@@ -61,6 +61,57 @@ pub async fn save_progress(
     }
 }
 
+pub async fn force_sync_progress(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SaveProgressRequest>,
+) -> (StatusCode, Json<ApiResponse<MergedProgressResponse>>) {
+    if payload.user_id.is_empty() || payload.audio_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::error("user_id and audio_id are required")),
+        );
+    }
+
+    if payload.device_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::error("device_id is required for force sync")),
+        );
+    }
+
+    if payload.position < 0.0 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::error("position must be non-negative")),
+        );
+    }
+
+    let save_result = state.store.force_save(
+        &payload.user_id,
+        &payload.audio_id,
+        &payload.device_id,
+        payload.position,
+        payload.duration,
+    );
+
+    match save_result {
+        Ok(_) => {
+            let merged = state.store.get_merged(&payload.user_id, &payload.audio_id);
+            match merged {
+                Some(m) => (StatusCode::OK, Json(ApiResponse::ok(m))),
+                None => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::error("Failed to retrieve merged progress after force sync")),
+                ),
+            }
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::error(&format!("Storage error: {}", e))),
+        ),
+    }
+}
+
 pub async fn get_progress(
     State(state): State<Arc<AppState>>,
     Path((user_id, audio_id)): Path<(String, String)>,

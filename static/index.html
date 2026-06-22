@@ -187,6 +187,10 @@
             background: #eee;
             color: #555;
         }
+        .btn-danger {
+            background: #ef5350;
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -243,6 +247,9 @@
         <div class="btn-group">
             <button class="btn-primary" onclick="saveProgress()">立即保存进度</button>
             <button class="btn-secondary" onclick="loadProgress()">同步云端进度</button>
+        </div>
+        <div class="btn-group" style="margin-top: 10px;">
+            <button class="btn-danger" onclick="forceSyncProgress()">⚡ 强制同步到云端（覆盖所有设备）</button>
         </div>
     </div>
 
@@ -441,6 +448,46 @@
                 }
             } catch (err) {
                 setStatus(`❌ 同步失败: ${err.message}`, 'error');
+            }
+        }
+
+        async function forceSyncProgress() {
+            const user_id = userIdInput.value.trim();
+            const audio_id = audioIdInput.value.trim();
+
+            if (!user_id || !audio_id) {
+                setStatus('⚠️ 请填写用户 ID 和音频 ID', 'error');
+                return;
+            }
+
+            const curPos = formatTime(audio.currentTime);
+            if (!confirm(`确定将本设备当前位置 (${curPos}) 强制覆盖云端所有设备的进度？\n此操作将清除其他所有设备的进度记录！`)) {
+                return;
+            }
+
+            setStatus('⚡ 正在强制同步到云端...', 'info');
+
+            const position = audio.currentTime;
+            const duration = audio.duration || 0;
+
+            try {
+                const res = await fetch('/api/progress/force', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id, audio_id, device_id: deviceId, position, duration })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    savedPosEl.innerHTML = `${formatTime(data.data.position)}<br><small>来自 ${data.data.source_device}</small>`;
+                    lastUpdateEl.textContent = new Date(data.data.updated_at).toLocaleTimeString('zh-CN');
+                    renderDeviceList(data.data.devices, data.data.source_device);
+                    setStatus(`✅ 强制同步成功！云端已覆盖为: ${formatTime(data.data.position)}`, 'success');
+                } else {
+                    setStatus(`❌ 强制同步失败: ${data.message}`, 'error');
+                }
+            } catch (err) {
+                setStatus(`❌ 网络错误: ${err.message}`, 'error');
             }
         }
 
