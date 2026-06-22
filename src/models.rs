@@ -7,6 +7,7 @@ pub struct AudioProgress {
     pub id: Uuid,
     pub user_id: String,
     pub audio_id: String,
+    pub device_id: String,
     pub position: f64,
     pub duration: f64,
     pub created_at: DateTime<Utc>,
@@ -17,18 +18,32 @@ pub struct AudioProgress {
 pub struct SaveProgressRequest {
     pub user_id: String,
     pub audio_id: String,
+    pub device_id: String,
     pub position: f64,
     pub duration: Option<f64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProgressResponse {
+    pub user_id: String,
+    pub audio_id: String,
+    pub device_id: String,
+    pub position: f64,
+    pub duration: f64,
+    pub percentage: f64,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MergedProgressResponse {
     pub user_id: String,
     pub audio_id: String,
     pub position: f64,
     pub duration: f64,
     pub percentage: f64,
     pub updated_at: DateTime<Utc>,
+    pub source_device: String,
+    pub devices: Vec<ProgressResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,6 +81,7 @@ impl From<AudioProgress> for ProgressResponse {
         Self {
             user_id: p.user_id,
             audio_id: p.audio_id,
+            device_id: p.device_id,
             position: p.position,
             duration: p.duration,
             percentage,

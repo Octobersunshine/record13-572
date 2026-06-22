@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::models::AudioProgress;
+use crate::models::{AudioProgress, MergedProgressResponse, ProgressResponse};
 
 const DATA_FILE: &str = "audio_progress.json";
 
@@ -16,8 +16,8 @@ struct ProgressData {
     progresses: HashMap<String, AudioProgress>,
 }
 
-fn key(user_id: &str, audio_id: &str) -> String {
-    format!("{}:{}", user_id, audio_id)
+fn device_key(user_id: &str, audio_id: &str, device_id: &str) -> String {
+    format!("{}:{}:{}", user_id, audio_id, device_id)
 }
 
 #[derive(Clone)]
@@ -59,15 +59,18 @@ impl ProgressStore {
         &self,
         user_id: &str,
         audio_id: &str,
+        device_id: &str,
         position: f64,
         duration: Option<f64>,
     ) -> Result<AudioProgress> {
         let mut data = self.data.write();
-        let k = key(user_id, audio_id);
+        let k = device_key(user_id, audio_id, device_id);
         let now = Utc::now();
 
         let progress = if let Some(existing) = data.progresses.get_mut(&k) {
-            existing.position = position;
+            if position > existing.position {
+                existing.position = position;
+            }
             if let Some(dur) = duration {
                 if dur > 0.0 {
                     existing.duration = dur;
@@ -80,6 +83,7 @@ impl ProgressStore {
                 id: Uuid::new_v4(),
                 user_id: user_id.to_string(),
                 audio_id: audio_id.to_string(),
+                device_id: device_id.to_string(),
                 position,
                 duration: duration.unwrap_or(0.0),
                 created_at: now,
@@ -93,31 +97,152 @@ impl ProgressStore {
         Ok(progress)
     }
 
-    pub fn get(&self, user_id: &str, audio_id: &str) -> Option<AudioProgress> {
+    pub fn get_device(
+        &self,
+        user_id: &str,
+        audio_id: &str,
+        device_id: &str,
+    ) -> Option<AudioProgress> {
         let data = self.data.read();
-        let k = key(user_id, audio_id);
+        let k = device_key(user_id, audio_id, device_id);
         data.progresses.get(&k).cloned()
     }
 
-    pub fn list_by_user(&self, user_id: &str) -> Vec<AudioProgress> {
+    pub fn get_merged(
+        &self,
+        user_id: &str,
+        audio_id: &str,
+    ) -> Option<MergedProgressResponse> {
+        let devices: Vec<ProgressResponse> = self
+            .list_devices(user_id, audio_id)
+            .into_iter()
+            .map(ProgressResponse::from)
+            .collect();
+
+        if devices.is_empty() {
+            return None;
+        }
+
+        let best = devices
+            .iter()
+            .max_by(|a, b| {
+                a.position
+                    .partial_cmp(&b.position)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .unwrap();
+
+        Some(MergedProgressResponse {
+            user_id: user_id.to_string(),
+            audio_id: audio_id.to_string(),
+            position: best.position,
+            duration: best.duration,
+            percentage: best.percentage,
+            updated_at: best.updated_at,
+            source_device: best.device_id.clone(),
+            devices,
+        })
+    }
+
+    pub fn list_devices(&self, user_id: &str, audio_id: &str) -> Vec<AudioProgress> {
         let data = self.data.read();
         let mut result: Vec<AudioProgress> = data
             .progresses
             .values()
-            .filter(|p| p.user_id == user_id)
+            .filter(|p| p.user_id == user_id && p.audio_id == audio_id)
             .cloned()
             .collect();
-        result.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        result.sort_by(|a, b| {
+            b.position
+                .partial_cmp(&a.position)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         result
     }
 
-    pub fn delete(&self, user_id: &str, audio_id: &str) -> Result<bool> {
+    pub fn list_by_user(&self, user_id: &str) -> Vec<MergedProgressResponse> {
+        let data = self.data.read();
+
+        let mut audio_ids: Vec<String> = data
+            .progresses
+            .values()
+            .filter(|p| p.user_id == user_id)
+            .map(|p| p.audio_id.clone())
+            .collect();
+        audio_ids.sort();
+        audio_ids.dedup();
+
+        audio_ids
+            .into_iter()
+            .filter_map(|aid| {
+                let devices: Vec<ProgressResponse> = data
+                    .progresses
+                    .values()
+                    .filter(|p| p.user_id == user_id && p.audio_id == aid)
+                    .cloned()
+                    .map(ProgressResponse::from)
+                    .collect();
+
+                if devices.is_empty() {
+                    return None;
+                }
+
+                let best = devices
+                    .iter()
+                    .max_by(|a, b| {
+                        a.position
+                            .partial_cmp(&b.position)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .unwrap();
+
+                Some(MergedProgressResponse {
+                    user_id: user_id.to_string(),
+                    audio_id: aid,
+                    position: best.position,
+                    duration: best.duration,
+                    percentage: best.percentage,
+                    updated_at: best.updated_at,
+                    source_device: best.device_id.clone(),
+                    devices,
+                })
+            })
+            .collect()
+    }
+
+    pub fn delete_device(
+        &self,
+        user_id: &str,
+        audio_id: &str,
+        device_id: &str,
+    ) -> Result<bool> {
         let mut data = self.data.write();
-        let k = key(user_id, audio_id);
+        let k = device_key(user_id, audio_id, device_id);
         let removed = data.progresses.remove(&k).is_some();
         if removed {
             self.persist(&data)?;
         }
         Ok(removed)
+    }
+
+    pub fn delete_all(&self, user_id: &str, audio_id: &str) -> Result<usize> {
+        let mut data = self.data.write();
+        let keys_to_remove: Vec<String> = data
+            .progresses
+            .keys()
+            .filter(|k| {
+                let parts: Vec<&str> = k.split(':').collect();
+                parts.len() >= 2 && parts[0] == user_id && parts[1] == audio_id
+            })
+            .cloned()
+            .collect();
+        let count = keys_to_remove.len();
+        for k in keys_to_remove {
+            data.progresses.remove(&k);
+        }
+        if count > 0 {
+            self.persist(&data)?;
+        }
+        Ok(count)
     }
 }

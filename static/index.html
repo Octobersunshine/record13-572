@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>音频播放进度记录</title>
+    <title>音频播放进度记录 - 多设备同步</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -19,7 +19,7 @@
             background: white;
             border-radius: 16px;
             padding: 32px;
-            max-width: 600px;
+            max-width: 640px;
             width: 100%;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
         }
@@ -32,6 +32,20 @@
             color: #666;
             margin-bottom: 24px;
             font-size: 14px;
+        }
+        .device-badge {
+            display: inline-block;
+            background: #e3f2fd;
+            color: #1565c0;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-family: monospace;
+            margin-bottom: 16px;
+        }
+        .device-badge::before {
+            content: "📱 本设备: ";
+            font-family: sans-serif;
         }
         .form-group {
             margin-bottom: 16px;
@@ -88,6 +102,10 @@
             padding: 12px;
             border-radius: 8px;
         }
+        .info-card.highlight {
+            background: linear-gradient(135deg, #e3f2fd, #f3e5f5);
+            border: 1px solid #bbdefb;
+        }
         .info-label {
             font-size: 12px;
             color: #888;
@@ -97,6 +115,52 @@
             font-size: 16px;
             font-weight: 600;
             color: #333;
+        }
+        .info-value small {
+            font-size: 11px;
+            font-weight: normal;
+            color: #888;
+        }
+        .device-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+        .device-section h3 {
+            font-size: 14px;
+            color: #555;
+            margin-bottom: 12px;
+        }
+        .device-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .device-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            background: #fafafa;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+        .device-item.current {
+            background: #e8f5e9;
+            border-left: 3px solid #66bb6a;
+        }
+        .device-item.source {
+            background: #fff3e0;
+            border-left: 3px solid #ffa726;
+        }
+        .device-name {
+            font-family: monospace;
+            color: #333;
+            font-weight: 500;
+        }
+        .device-progress {
+            color: #667eea;
+            font-weight: 600;
         }
         .btn-group {
             display: flex;
@@ -128,7 +192,10 @@
 <body>
     <div class="container">
         <h1>🎵 音频播放进度记录</h1>
-        <p class="subtitle">自动记录播放位置，下次打开自动跳转</p>
+        <p class="subtitle">多设备自动同步 · 手机平板进度互通</p>
+
+        <span class="device-badge" id="deviceBadge">-</span>
+        <button class="btn-secondary" style="padding: 4px 10px; font-size: 12px; flex: none; margin-bottom: 16px;" onclick="resetDeviceId()">重置设备ID</button>
 
         <div class="form-group">
             <label for="userId">用户 ID</label>
@@ -152,9 +219,9 @@
                 <div class="info-label">当前位置</div>
                 <div class="info-value" id="currentPosition">0.0 秒</div>
             </div>
-            <div class="info-card">
-                <div class="info-label">已保存位置</div>
-                <div class="info-value" id="savedPosition">无记录</div>
+            <div class="info-card highlight">
+                <div class="info-label">云端最佳进度</div>
+                <div class="info-value" id="savedPosition">无记录<br><small id="sourceDevice"></small></div>
             </div>
             <div class="info-card">
                 <div class="info-label">播放进度</div>
@@ -166,24 +233,54 @@
             </div>
         </div>
 
+        <div class="device-section">
+            <h3>📊 各设备进度同步状态</h3>
+            <div class="device-list" id="deviceList">
+                <div style="color: #999; font-size: 13px;">暂无设备数据</div>
+            </div>
+        </div>
+
         <div class="btn-group">
             <button class="btn-primary" onclick="saveProgress()">立即保存进度</button>
-            <button class="btn-secondary" onclick="loadProgress()">读取上次进度</button>
+            <button class="btn-secondary" onclick="loadProgress()">同步云端进度</button>
         </div>
     </div>
 
     <script>
+        const DEVICE_ID_KEY = 'audio_tracker_device_id';
         const audio = document.getElementById('audioPlayer');
         const userIdInput = document.getElementById('userId');
         const audioIdInput = document.getElementById('audioId');
         const statusEl = document.getElementById('status');
         const currentPosEl = document.getElementById('currentPosition');
         const savedPosEl = document.getElementById('savedPosition');
+        const sourceDeviceEl = document.getElementById('sourceDevice');
         const progressEl = document.getElementById('playProgress');
         const lastUpdateEl = document.getElementById('lastUpdate');
+        const deviceBadgeEl = document.getElementById('deviceBadge');
+        const deviceListEl = document.getElementById('deviceList');
 
         let saveTimer = null;
         const SAVE_INTERVAL = 5000;
+
+        function getOrCreateDeviceId() {
+            let deviceId = localStorage.getItem(DEVICE_ID_KEY);
+            if (!deviceId) {
+                deviceId = 'dev_' + Math.random().toString(36).substring(2, 10);
+                localStorage.setItem(DEVICE_ID_KEY, deviceId);
+            }
+            return deviceId;
+        }
+
+        function resetDeviceId() {
+            if (confirm('确定重置设备ID？重置后此设备将被识别为新设备。')) {
+                localStorage.removeItem(DEVICE_ID_KEY);
+                location.reload();
+            }
+        }
+
+        const deviceId = getOrCreateDeviceId();
+        deviceBadgeEl.textContent = deviceId;
 
         function setStatus(message, type = 'info') {
             statusEl.className = `status ${type}`;
@@ -198,6 +295,33 @@
             return `${mins}分 ${secs} 秒`;
         }
 
+        function renderDeviceList(devices, sourceDevice) {
+            if (!devices || devices.length === 0) {
+                deviceListEl.innerHTML = '<div style="color: #999; font-size: 13px;">暂无设备数据</div>';
+                return;
+            }
+            deviceListEl.innerHTML = devices.map(d => {
+                let cls = 'device-item';
+                let tag = '';
+                if (d.device_id === deviceId) {
+                    cls += ' current';
+                    tag = ' <span style="color:#2e7d32; font-size:11px;">（本设备）</span>';
+                }
+                if (d.device_id === sourceDevice) {
+                    cls += ' source';
+                    tag += ' <span style="color:#e65100; font-size:11px;">（最佳进度来源）</span>';
+                }
+                const time = new Date(d.updated_at).toLocaleTimeString('zh-CN');
+                return `<div class="${cls}">
+                    <div>
+                        <span class="device-name">${d.device_id}</span>${tag}
+                        <div style="font-size:11px; color:#999; margin-top:2px;">更新于 ${time}</div>
+                    </div>
+                    <div class="device-progress">${formatTime(d.position)} · ${d.percentage.toFixed(1)}%</div>
+                </div>`;
+            }).join('');
+        }
+
         audio.addEventListener('timeupdate', () => {
             currentPosEl.textContent = formatTime(audio.currentTime);
             if (audio.duration) {
@@ -207,18 +331,18 @@
         });
 
         audio.addEventListener('play', () => {
-            setStatus('🎧 播放中，将每 5 秒自动保存进度...', 'info');
+            setStatus('🎧 播放中，将每 5 秒自动同步进度到云端...', 'info');
             startAutoSave();
         });
 
         audio.addEventListener('pause', () => {
-            setStatus('⏸️ 已暂停，正在保存进度...', 'info');
+            setStatus('⏸️ 已暂停，正在同步进度...', 'info');
             saveProgress();
             stopAutoSave();
         });
 
         audio.addEventListener('ended', () => {
-            setStatus('✅ 播放完成，进度已保存', 'success');
+            setStatus('✅ 播放完成，进度已同步', 'success');
             saveProgress();
             stopAutoSave();
         });
@@ -253,19 +377,19 @@
                 const res = await fetch('/api/progress', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ user_id, audio_id, position, duration })
+                    body: JSON.stringify({ user_id, audio_id, device_id: deviceId, position, duration })
                 });
                 const data = await res.json();
 
                 if (data.success) {
-                    savedPosEl.textContent = formatTime(data.data.position);
-                    const lastUpdate = new Date(data.data.updated_at);
-                    lastUpdateEl.textContent = lastUpdate.toLocaleTimeString('zh-CN');
+                    savedPosEl.innerHTML = `${formatTime(data.data.position)}<br><small>来自 ${data.data.source_device}</small>`;
+                    lastUpdateEl.textContent = new Date(data.data.updated_at).toLocaleTimeString('zh-CN');
+                    renderDeviceList(data.data.devices, data.data.source_device);
                     if (!audio.paused) {
-                        setStatus(`✅ 进度已保存: ${formatTime(data.data.position)}`, 'success');
+                        setStatus(`✅ 已同步: ${formatTime(data.data.position)} (最佳来自 ${data.data.source_device})`, 'success');
                     }
                 } else {
-                    setStatus(`❌ 保存失败: ${data.message}`, 'error');
+                    setStatus(`❌ 同步失败: ${data.message}`, 'error');
                 }
             } catch (err) {
                 setStatus(`❌ 网络错误: ${err.message}`, 'error');
@@ -281,34 +405,42 @@
                 return;
             }
 
-            setStatus('📡 正在读取上次播放进度...', 'info');
+            setStatus('📡 正在从云端拉取最佳进度...', 'info');
 
             try {
                 const res = await fetch(`/api/progress/${encodeURIComponent(user_id)}/${encodeURIComponent(audio_id)}`);
                 const data = await res.json();
 
                 if (data.success && data.data) {
-                    const { position, percentage } = data.data;
-                    savedPosEl.textContent = formatTime(position);
+                    const { position, percentage, source_device, devices } = data.data;
+                    savedPosEl.innerHTML = `${formatTime(position)}<br><small>来自 ${source_device}</small>`;
                     progressEl.textContent = `${percentage.toFixed(1)}%`;
                     lastUpdateEl.textContent = new Date(data.data.updated_at).toLocaleTimeString('zh-CN');
+                    renderDeviceList(devices, source_device);
+
+                    const applySeek = () => {
+                        if (Math.abs(audio.currentTime - position) > 1.0) {
+                            audio.currentTime = position;
+                        }
+                    };
 
                     if (audio.readyState >= 1) {
-                        audio.currentTime = position;
-                        setStatus(`✅ 已跳转到上次位置: ${formatTime(position)} (${percentage.toFixed(1)}%)`, 'success');
+                        applySeek();
+                        setStatus(`✅ 已同步最佳进度: ${formatTime(position)} (来自 ${source_device})`, 'success');
                     } else {
                         audio.addEventListener('loadedmetadata', function onLoaded() {
-                            audio.currentTime = position;
-                            setStatus(`✅ 已跳转到上次位置: ${formatTime(position)} (${percentage.toFixed(1)}%)`, 'success');
+                            applySeek();
+                            setStatus(`✅ 已同步最佳进度: ${formatTime(position)} (来自 ${source_device})`, 'success');
                             audio.removeEventListener('loadedmetadata', onLoaded);
                         });
                     }
                 } else {
-                    setStatus('ℹ️ 暂无播放记录，将从头开始播放', 'info');
-                    savedPosEl.textContent = '无记录';
+                    setStatus('ℹ️ 云端暂无播放记录，将从头开始播放', 'info');
+                    savedPosEl.innerHTML = '无记录';
+                    deviceListEl.innerHTML = '<div style="color: #999; font-size: 13px;">暂无设备数据</div>';
                 }
             } catch (err) {
-                setStatus(`❌ 读取失败: ${err.message}`, 'error');
+                setStatus(`❌ 同步失败: ${err.message}`, 'error');
             }
         }
 
